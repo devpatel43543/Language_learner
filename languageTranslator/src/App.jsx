@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 
 export default function WordLearningApp() {
+    const backendUrl = import.meta.env.VITE_BACKEND_BASE_URL;
 
   // States for language selection
   const [sourceLanguage, setSourceLanguage] = useState("en");
@@ -64,7 +65,7 @@ export default function WordLearningApp() {
     setIsProcessing(true);
 
     try {
-      const response = await fetch("http://34.224.100.173:8000/translate", {
+      const response = await fetch(`${backendUrl}/translate`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
