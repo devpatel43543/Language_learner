@@ -205,7 +205,7 @@ Resources:
 
   FrontendLaunchTemplate:
     Type: AWS::EC2::LaunchTemplate
-    DependsOn: [ BackendALB, UploadApiDeployment ]
+    DependsOn: [ BackendALB ]
     Properties:
       LaunchTemplateName: FrontendLaunchTemplate
       VersionDescription: "Version 1"
