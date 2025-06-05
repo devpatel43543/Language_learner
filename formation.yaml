@@ -205,13 +205,13 @@ Resources:
 
   FrontendLaunchTemplate:
     Type: AWS::EC2::LaunchTemplate
-    DependsOn: [ BackendALB ]
+    DependsOn: BackendALB
     Properties:
       LaunchTemplateName: FrontendLaunchTemplate
       VersionDescription: "Version 1"
       LaunchTemplateData:
         ImageId: ami-0953476d60561c955
-        InstanceType: t2.micro
+        InstanceType: t2.medium
         KeyName: dev
         SecurityGroupIds:
         - !Ref FrontendSecurityGroup
@@ -240,10 +240,11 @@ Resources:
             echo "Listing directory contents after clone..."
             ls -la /home/ec2-user
             echo "Navigating to frontend directory..."
-            cd /home/ec2-user/interviewPrep/frontend
+            cd /home/ec2-user/Language_learner/languageTranslator
             echo "Building Docker image with backend and API Gateway URLs..."
+            echo "Backend ALB DNS Name: ${BackendALB.DNSName}"
             docker build \
-              --build-arg VITE_BACKEND_BASE_URL=http://${BackendALB.DNSName} \
+              --build-arg VITE_BACKEND_BASE_URL=http://${BackendALB.DNSName}  \
               -t devkumar640/frontend_interviewprep .
             echo "Running Docker container..."
             docker run -d -p 80:80 --name frontend devkumar640/frontend_interviewprep
@@ -352,6 +353,13 @@ Resources:
         KeyName: dev
         SecurityGroupIds:
         - !Ref BackendSecurityGroup
+        BlockDeviceMappings:
+        - DeviceName: /dev/xvda  # For Amazon Linux 2
+          Ebs:
+            VolumeSize: 30  # 30 GB
+            VolumeType: gp3  # General Purpose SSD (gp3 is recommended)
+            DeleteOnTermination: true
+            Encrypted: false
         TagSpecifications:
         - ResourceType: instance
           Tags:
@@ -376,7 +384,7 @@ Resources:
             sleep 10
 
             # Pull llama model
-            sudo docker exec $CONTAINER_ID ollama pull llama3.2.1b
+            sudo docker exec $CONTAINER_ID ollama pull llama3.2
 
             # Install Python
             yum install -y python3 python3-pip
@@ -538,6 +546,9 @@ Resources:
       - !Ref PublicSubnet2
       SecurityGroups:
       - !Ref BackendALBSecurityGroup
+      LoadBalancerAttributes:
+      - Key: idle_timeout.timeout_seconds
+        Value: '180'  
       Tags:
       - Key: Name
         Value: backend-ALB
@@ -588,6 +599,382 @@ Resources:
       - Key: Name
         Value: backend-asg
         PropagateAtLaunch: true
+# CloudWatch Dashboard
+  LnaguageLearnerDashboard:
+    Type: AWS::CloudWatch::Dashboard
+    DependsOn:
+      - FrontendALB
+      - BackendALB
+      - FrontendTargetGroup
+      - BackendTargetGroup
+      - FrontendASG
+      - BackendASG
+    Properties:
+      DashboardName: InterviewPrep-Monitoring-Dashboard
+      DashboardBody: !Sub |
+        {
+          "widgets": [
+            {
+              "type": "metric",
+              "x": 0,
+              "y": 0,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "metrics": [
+                  [ "AWS/ApplicationELB", "RequestCount", "LoadBalancer", "${FrontendALB.LoadBalancerFullName}" ],
+                  [ ".", "TargetResponseTime", ".", "." ],
+                  [ ".", "HTTPCode_Target_2XX_Count", ".", "." ],
+                  [ ".", "HTTPCode_Target_4XX_Count", ".", "." ],
+                  [ ".", "HTTPCode_Target_5XX_Count", ".", "." ]
+                ],
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "${AWS::Region}",
+                "title": "Frontend ALB Metrics",
+                "period": 300,
+                "stat": "Sum"
+              }
+            },
+            {
+              "type": "metric",
+              "x": 12,
+              "y": 0,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "metrics": [
+                  [ "AWS/ApplicationELB", "RequestCount", "LoadBalancer", "${BackendALB.LoadBalancerFullName}" ],
+                  [ ".", "TargetResponseTime", ".", "." ],
+                  [ ".", "HTTPCode_Target_2XX_Count", ".", "." ],
+                  [ ".", "HTTPCode_Target_4XX_Count", ".", "." ],
+                  [ ".", "HTTPCode_Target_5XX_Count", ".", "." ]
+                ],
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "${AWS::Region}",
+                "title": "Backend ALB Metrics",
+                "period": 300,
+                "stat": "Sum"
+              }
+            },
+            {
+              "type": "metric",
+              "x": 0,
+              "y": 6,
+              "width": 8,
+              "height": 6,
+              "properties": {
+                "metrics": [
+                  [ "AWS/AutoScaling", "GroupDesiredCapacity", "AutoScalingGroupName", "frontend-asg" ],
+                  [ ".", "GroupInServiceInstances", ".", "." ],
+                  [ ".", "GroupTotalInstances", ".", "." ]
+                ],
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "${AWS::Region}",
+                "title": "Frontend ASG Capacity",
+                "period": 300,
+                "stat": "Average"
+              }
+            },
+            {
+              "type": "metric",
+              "x": 8,
+              "y": 6,
+              "width": 8,
+              "height": 6,
+              "properties": {
+                "metrics": [
+                  [ "AWS/AutoScaling", "GroupDesiredCapacity", "AutoScalingGroupName", "backend-asg" ],
+                  [ ".", "GroupInServiceInstances", ".", "." ],
+                  [ ".", "GroupTotalInstances", ".", "." ]
+                ],
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "${AWS::Region}",
+                "title": "Backend ASG Capacity",
+                "period": 300,
+                "stat": "Average"
+              }
+            },
+            {
+              "type": "metric",
+              "x": 16,
+              "y": 6,
+              "width": 8,
+              "height": 6,
+              "properties": {
+                "metrics": [
+                  [ "AWS/ApplicationELB", "HealthyHostCount", "TargetGroup", "${FrontendTargetGroup.TargetGroupFullName}" ],
+                  [ ".", "UnHealthyHostCount", ".", "." ]
+                ],
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "${AWS::Region}",
+                "title": "Frontend Target Health",
+                "period": 300,
+                "stat": "Average"
+              }
+            },
+            {
+              "type": "metric",
+              "x": 0,
+              "y": 12,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "metrics": [
+                  [ "AWS/EC2", "CPUUtilization", "AutoScalingGroupName", "frontend-asg" ],
+                  [ ".", "NetworkIn", ".", "." ],
+                  [ ".", "NetworkOut", ".", "." ]
+                ],
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "${AWS::Region}",
+                "title": "Frontend EC2 Performance",
+                "period": 300,
+                "stat": "Average"
+              }
+            },
+            {
+              "type": "metric",
+              "x": 12,
+              "y": 12,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "metrics": [
+                  [ "AWS/EC2", "CPUUtilization", "AutoScalingGroupName", "backend-asg" ],
+                  [ ".", "NetworkIn", ".", "." ],
+                  [ ".", "NetworkOut", ".", "." ]
+                ],
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "${AWS::Region}",
+                "title": "Backend EC2 Performance",
+                "period": 300,
+                "stat": "Average"
+              }
+            },
+            {
+              "type": "metric",
+              "x": 0,
+              "y": 18,
+              "width": 8,
+              "height": 6,
+              "properties": {
+                "metrics": [
+                  [ "AWS/ApplicationELB", "HealthyHostCount", "TargetGroup", "${BackendTargetGroup.TargetGroupFullName}" ],
+                  [ ".", "UnHealthyHostCount", ".", "." ]
+                ],
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "${AWS::Region}",
+                "title": "Backend Target Health",
+                "period": 300,
+                "stat": "Average"
+              }
+            },
+            {
+              "type": "metric",
+              "x": 8,
+              "y": 18,
+              "width": 8,
+              "height": 6,
+              "properties": {
+                "metrics": [
+                  [ "AWS/ApplicationELB", "ActiveConnectionCount", "LoadBalancer", "${FrontendALB.LoadBalancerFullName}" ],
+                  [ ".", "NewConnectionCount", ".", "." ]
+                ],
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "${AWS::Region}",
+                "title": "Frontend ALB Connections",
+                "period": 300,
+                "stat": "Sum"
+              }
+            },
+            {
+              "type": "metric",
+              "x": 16,
+              "y": 18,
+              "width": 8,
+              "height": 6,
+              "properties": {
+                "metrics": [
+                  [ "AWS/ApplicationELB", "ActiveConnectionCount", "LoadBalancer", "${BackendALB.LoadBalancerFullName}" ],
+                  [ ".", "NewConnectionCount", ".", "." ]
+                ],
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "${AWS::Region}",
+                "title": "Backend ALB Connections",
+                "period": 300,
+                "stat": "Sum"
+              }
+            }
+          ]
+        }
+
+  # CloudWatch Alarms for Critical Metrics
+  FrontendHighCPUAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: Frontend-High-CPU-Utilization
+      AlarmDescription: Alarm when Frontend CPU exceeds 80%
+      ComparisonOperator: GreaterThanThreshold
+      EvaluationPeriods: 2
+      MetricName: CPUUtilization
+      Namespace: AWS/EC2
+      Period: 300
+      Statistic: Average
+      Threshold: 80
+      ActionsEnabled: true
+      Dimensions:
+        - Name: AutoScalingGroupName
+          Value: !Ref FrontendASG
+      TreatMissingData: notBreaching
+
+  BackendHighCPUAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: Backend-High-CPU-Utilization
+      AlarmDescription: Alarm when Backend CPU exceeds 80%
+      ComparisonOperator: GreaterThanThreshold
+      EvaluationPeriods: 2
+      MetricName: CPUUtilization
+      Namespace: AWS/EC2
+      Period: 300
+      Statistic: Average
+      Threshold: 80
+      ActionsEnabled: true
+      Dimensions:
+        - Name: AutoScalingGroupName
+          Value: !Ref BackendASG
+      TreatMissingData: notBreaching
+
+  FrontendALBHighResponseTimeAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: Frontend-ALB-High-Response-Time
+      AlarmDescription: Alarm when Frontend ALB response time exceeds 1 second
+      ComparisonOperator: GreaterThanThreshold
+      EvaluationPeriods: 2
+      MetricName: TargetResponseTime
+      Namespace: AWS/ApplicationELB
+      Period: 300
+      Statistic: Average
+      Threshold: 1
+      ActionsEnabled: true
+      Dimensions:
+        - Name: LoadBalancer
+          Value: !GetAtt FrontendALB.LoadBalancerFullName
+      TreatMissingData: notBreaching
+
+  BackendALBHighResponseTimeAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: Backend-ALB-High-Response-Time
+      AlarmDescription: Alarm when Backend ALB response time exceeds 2 seconds
+      ComparisonOperator: GreaterThanThreshold
+      EvaluationPeriods: 2
+      MetricName: TargetResponseTime
+      Namespace: AWS/ApplicationELB
+      Period: 300
+      Statistic: Average
+      Threshold: 2
+      ActionsEnabled: true
+      Dimensions:
+        - Name: LoadBalancer
+          Value: !GetAtt BackendALB.LoadBalancerFullName
+      TreatMissingData: notBreaching
+
+  FrontendUnhealthyHostAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: Frontend-Unhealthy-Hosts
+      AlarmDescription: Alarm when Frontend has unhealthy hosts
+      ComparisonOperator: GreaterThanThreshold
+      EvaluationPeriods: 1
+      MetricName: UnHealthyHostCount
+      Namespace: AWS/ApplicationELB
+      Period: 300
+      Statistic: Average
+      Threshold: 0
+      ActionsEnabled: true
+      Dimensions:
+        - Name: TargetGroup
+          Value: !GetAtt FrontendTargetGroup.TargetGroupFullName
+      TreatMissingData: notBreaching
+
+  BackendUnhealthyHostAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: Backend-Unhealthy-Hosts
+      AlarmDescription: Alarm when Backend has unhealthy hosts
+      ComparisonOperator: GreaterThanThreshold
+      EvaluationPeriods: 1
+      MetricName: UnHealthyHostCount
+      Namespace: AWS/ApplicationELB
+      Period: 300
+      Statistic: Average
+      Threshold: 0
+      ActionsEnabled: true
+      Dimensions:
+        - Name: TargetGroup
+          Value: !GetAtt BackendTargetGroup.TargetGroupFullName
+      TreatMissingData: notBreaching
+
+  Frontend5XXErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: Frontend-5XX-Errors
+      AlarmDescription: Alarm when Frontend ALB has 5XX errors
+      ComparisonOperator: GreaterThanThreshold
+      EvaluationPeriods: 2
+      MetricName: HTTPCode_Target_5XX_Count
+      Namespace: AWS/ApplicationELB
+      Period: 300
+      Statistic: Sum
+      Threshold: 5
+      ActionsEnabled: true
+      Dimensions:
+        - Name: LoadBalancer
+          Value: !GetAtt FrontendALB.LoadBalancerFullName
+      TreatMissingData: notBreaching
+
+  Backend5XXErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: Backend-5XX-Errors
+      AlarmDescription: Alarm when Backend ALB has 5XX errors
+      ComparisonOperator: GreaterThanThreshold
+      EvaluationPeriods: 2
+      MetricName: HTTPCode_Target_5XX_Count
+      Namespace: AWS/ApplicationELB
+      Period: 300
+      Statistic: Sum
+      Threshold: 5
+      ActionsEnabled: true
+      Dimensions:
+        - Name: LoadBalancer
+          Value: !GetAtt BackendALB.LoadBalancerFullName
+      TreatMissingData: notBreaching
+
+
+  # Log Groups for Application Logs
+  FrontendLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/ec2/frontend-instances
+      RetentionInDays: 7
+
+  BackendLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/ec2/backend-instances
+      RetentionInDays: 7
 
 Outputs:
   VPCId:
