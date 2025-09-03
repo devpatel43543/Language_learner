@@ -1,8 +1,8 @@
 import { useState, useEffect } from "react";
 
 export default function WordLearningApp() {
-    const backendUrl = "http://backend-ALB-1932664094.us-east-1.elb.amazonaws.com";
-console.log("Backend URL:", backendUrl);
+    const backendUrl = import.meta.env.VITE_BACKEND_BASE_URL || "http://localhost:3000";
+    console.log("Backend URL:", backendUrl);
   // States for language selection
   const [sourceLanguage, setSourceLanguage] = useState("en");
   const [targetLanguage, setTargetLanguage] = useState("es");
